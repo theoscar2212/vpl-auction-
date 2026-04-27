@@ -228,13 +228,10 @@
   .unsold-chips { display: flex; flex-wrap: wrap; gap: 8px; }
   .unsold-chip { padding: 5px 12px; background: var(--surface); border: 1px solid var(--border2); border-radius: 50px; font-size: 12px; color: var(--muted); }
 
-  /* TIMER */
-  .timer-ring { position: relative; width: 64px; height: 64px; }
-  .timer-ring svg { transform: rotate(-90deg); }
-  .timer-ring circle { fill: none; stroke-width: 4; stroke-linecap: round; }
-  .timer-ring .track { stroke: var(--surface3); }
-  .timer-ring .fill { stroke: var(--gold); transition: stroke-dashoffset 1s linear; }
-  .timer-num { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; font-family: 'Bebas Neue', sans-serif; font-size: 22px; color: var(--gold); }
+  /* CUSTOM BID INPUT */
+  .custom-bid-row { display: flex; gap: 10px; align-items: flex-end; margin-bottom: 20px; }
+  .custom-bid-row input { flex: 1; font-size: 18px; font-family: 'DM Mono', monospace; font-weight: 500; padding: 12px 16px; border-radius: 10px; }
+  .custom-bid-row .btn { padding: 12px 20px; font-size: 14px; white-space: nowrap; }
 
   /* ANIMATION */
   @keyframes fadeIn { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
@@ -380,9 +377,7 @@ const state = {
   currentBid: 0,
   currentBidder: null,
   auctionLog: [],
-  auctionStarted: false,
-  timerVal: 30,
-  timerInterval: null
+  auctionStarted: false
 };
 
 const ROLE_LABELS = { bat: 'Batsman', bowl: 'Bowler', all: 'All-Rounder', wk: 'Wicket Keeper' };
@@ -475,71 +470,42 @@ function startAuction() {
 }
 
 function nextPlayer() {
-  clearInterval(state.timerInterval);
   if (!state.queue.length) { endAuction(); return; }
   state.current = state.queue.shift();
   state.currentBid = state.current.base;
   state.currentBidder = null;
   renderAuction();
-  startTimer();
 }
 
-function startTimer() {
-  state.timerVal = 30;
-  updateTimer();
-  state.timerInterval = setInterval(() => {
-    state.timerVal--;
-    updateTimer();
-    if (state.timerVal <= 0) {
-      clearInterval(state.timerInterval);
-      autoSold();
-    }
-  }, 1000);
-}
-
-function resetTimer() {
-  clearInterval(state.timerInterval);
-  state.timerVal = 30;
-  updateTimer();
-  state.timerInterval = setInterval(() => {
-    state.timerVal--;
-    updateTimer();
-    if (state.timerVal <= 0) { clearInterval(state.timerInterval); autoSold(); }
-  }, 1000);
-}
-
-function updateTimer() {
-  const el = document.getElementById('timerNum');
-  const fill = document.getElementById('timerFill');
-  if (!el || !fill) return;
-  el.textContent = state.timerVal;
-  const r = 28; const circ = 2 * Math.PI * r;
-  fill.style.strokeDashoffset = circ - (state.timerVal / 30) * circ;
-  el.style.color = state.timerVal <= 5 ? '#fc8181' : 'var(--gold)';
-  fill.style.stroke = state.timerVal <= 5 ? '#fc8181' : 'var(--gold)';
-}
-
-function bid(teamIdx) {
+function bid(teamIdx, customAmt) {
   const team = state.teams[teamIdx];
-  const newBid = state.currentBid + getBidIncrement();
+  let newBid;
+  if (customAmt !== undefined) {
+    newBid = customAmt;
+  } else {
+    newBid = state.currentBid + 0.5;
+  }
+  newBid = Math.round(newBid * 100) / 100;
+  if (newBid <= state.currentBid) { showToast('Bid must be higher than the current bid!'); return; }
   if (newBid > team.remaining) { showToast(`${team.name} doesn't have enough budget!`); return; }
   state.currentBid = newBid;
   state.currentBidder = teamIdx;
-  addLog(`bid`, `${team.name} bid ₹${newBid.toFixed(2)}Cr for ${state.current.name}`);
+  addLog('bid', `${team.name} bid ₹${newBid.toFixed(2)}Cr for ${state.current.name}`);
   updateBidDisplay();
-  resetTimer();
   const bidDisp = document.getElementById('bidDisplay');
   if (bidDisp) { bidDisp.classList.remove('pulse'); void bidDisp.offsetWidth; bidDisp.classList.add('pulse'); }
 }
 
-function getBidIncrement() {
-  const sel = document.getElementById('bidIncrement');
-  return sel ? parseFloat(sel.value) : 0.5;
+function applyCustomBid(teamIdx) {
+  const inp = document.getElementById('customBidInput');
+  const val = parseFloat(inp.value);
+  if (isNaN(val) || val <= 0) { showToast('Enter a valid bid amount'); return; }
+  bid(teamIdx, val);
+  inp.value = '';
 }
 
 function soldPlayer() {
   if (!state.current) return;
-  clearInterval(state.timerInterval);
   if (state.currentBidder === null) { unsoldPlayer(); return; }
   const team = state.teams[state.currentBidder];
   state.current.status = 'sold';
@@ -552,13 +518,7 @@ function soldPlayer() {
   setTimeout(nextPlayer, 1200);
 }
 
-function autoSold() {
-  if (state.currentBidder === null) { unsoldPlayer(); return; }
-  soldPlayer();
-}
-
 function unsoldPlayer() {
-  clearInterval(state.timerInterval);
   if (!state.current) return;
   state.current.status = 'unsold';
   addLog('unsold', `UNSOLD: ${state.current.name}`);
@@ -584,9 +544,30 @@ function updateBidDisplay() {
   const bidEl = document.getElementById('currentBidAmt');
   const bidByEl = document.getElementById('bidByTeam');
   if (bidEl) bidEl.textContent = `₹${state.currentBid.toFixed(2)}Cr`;
-  if (bidByEl) bidByEl.textContent = state.currentBidder !== null ? state.teams[state.currentBidder].name : 'No bid yet';
-  // Update budget bars
+  if (bidByEl) {
+    bidByEl.textContent = state.currentBidder !== null ? state.teams[state.currentBidder].name : 'No bid yet';
+    bidByEl.style.color = state.currentBidder !== null ? 'var(--gold)' : 'var(--muted)';
+  }
   renderSidebarBudgets();
+}
+
+function placeBid(teamIdx) {
+  const inp = document.getElementById('customBidInput');
+  const val = inp ? parseFloat(inp.value) : NaN;
+  if (!isNaN(val) && val > 0) {
+    bid(teamIdx, val);
+    inp.value = '';
+  } else {
+    bid(teamIdx);
+  }
+}
+
+function quickAdd(amount) {
+  const inp = document.getElementById('customBidInput');
+  if (!inp) return;
+  const cur = parseFloat(inp.value) || state.currentBid;
+  inp.value = Math.round((cur + amount) * 100) / 100;
+  inp.focus();
 }
 
 function renderSidebarBudgets() {
@@ -600,7 +581,6 @@ function renderSidebarBudgets() {
 
 function renderAuction() {
   if (!state.current) return;
-  const r = 28; const circ = 2 * Math.PI * r;
   const auctionContent = document.getElementById('auctionContent');
   auctionContent.innerHTML = `
     <div class="auction-layout">
@@ -614,19 +594,6 @@ function renderAuction() {
           <div class="stat-chips">
             <span class="stat-chip">Base Price: ₹${state.current.base}Cr</span>
             <span class="stat-chip">${state.queue.length} players remaining</span>
-          </div>
-          <div style="display:flex;align-items:center;justify-content:center;gap:16px;margin-top:16px;">
-            <div class="timer-ring">
-              <svg width="64" height="64" viewBox="0 0 64 64">
-                <circle class="track" cx="32" cy="32" r="${r}" stroke-dasharray="${circ}" stroke-dashoffset="0"/>
-                <circle class="fill" id="timerFill" cx="32" cy="32" r="${r}" stroke-dasharray="${circ}" stroke-dashoffset="0"/>
-              </svg>
-              <div class="timer-num" id="timerNum">30</div>
-            </div>
-            <div style="text-align:left;">
-              <div style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:1px;">Auto-closes in</div>
-              <div style="font-size:13px;color:var(--text);">No bid = unsold</div>
-            </div>
           </div>
         </div>
 
@@ -642,28 +609,29 @@ function renderAuction() {
           </div>
         </div>
 
-        <!-- BID INCREMENT -->
-        <div class="bid-controls">
-          <div>
-            <label style="display:block;margin-bottom:6px;">Bid Increment</label>
-            <select id="bidIncrement" class="bid-amount-select">
-              <option value="0.1">+₹0.1 Cr</option>
-              <option value="0.25">+₹0.25 Cr</option>
-              <option value="0.5" selected>+₹0.5 Cr</option>
-              <option value="1">+₹1 Cr</option>
-              <option value="2">+₹2 Cr</option>
-              <option value="5">+₹5 Cr</option>
-            </select>
+        <!-- CUSTOM BID INPUT -->
+        <div style="margin-bottom:8px;">
+          <label style="display:block;margin-bottom:6px;">Type Bid Amount (₹ Crores)</label>
+          <div style="display:flex;gap:10px;align-items:center;margin-bottom:8px;">
+            <input type="number" id="customBidInput" placeholder="e.g. 3.5" min="0" step="0.1"
+              style="flex:1;font-size:18px;font-family:'DM Mono',monospace;font-weight:500;padding:12px 16px;border-radius:10px;"
+              onkeydown="if(event.key==='Enter'){const focused=document.activeElement;focused.blur();}"
+            >
+            <span style="font-size:13px;color:var(--muted);">then click a team →</span>
+          </div>
+          <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:16px;">
+            <span style="font-size:12px;color:var(--muted);align-self:center;">Quick add:</span>
+            ${[0.25, 0.5, 1, 2, 5].map(v => `<button class="btn btn-outline btn-sm" onclick="quickAdd(${v})">+₹${v}Cr</button>`).join('')}
           </div>
         </div>
 
         <!-- TEAM BID BUTTONS -->
         <div class="team-bid-btns">
-          <button class="team-bid-btn t1" onclick="bid(0)" ${state.teams[0].remaining < state.currentBid ? 'disabled' : ''}>
+          <button class="team-bid-btn t1" onclick="placeBid(0)" ${state.teams[0].remaining <= 0 ? 'disabled' : ''}>
             ${state.teams[0].name}
             <span class="team-budget-inline">₹${state.teams[0].remaining.toFixed(2)}Cr remaining</span>
           </button>
-          <button class="team-bid-btn t2" onclick="bid(1)" ${state.teams[1].remaining < state.currentBid ? 'disabled' : ''}>
+          <button class="team-bid-btn t2" onclick="placeBid(1)" ${state.teams[1].remaining <= 0 ? 'disabled' : ''}>
             ${state.teams[1].name}
             <span class="team-budget-inline">₹${state.teams[1].remaining.toFixed(2)}Cr remaining</span>
           </button>
@@ -712,11 +680,9 @@ function renderAuction() {
   `;
   updateBidDisplay();
   renderLog();
-  updateTimer();
 }
 
 function endAuction() {
-  clearInterval(state.timerInterval);
   state.auctionStarted = false;
   document.getElementById('phaseBadge').textContent = 'AUCTION COMPLETE';
   document.getElementById('phaseBadge').style.background = 'rgba(29,185,84,0.15)';
@@ -809,7 +775,6 @@ function resetAll() {
   state.currentBidder = null;
   state.auctionLog = [];
   state.auctionStarted = false;
-  clearInterval(state.timerInterval);
   document.getElementById('phaseBadge').textContent = 'SETUP PHASE';
   document.getElementById('phaseBadge').style.background = 'rgba(245,200,66,0.12)';
   document.getElementById('phaseBadge').style.borderColor = 'rgba(245,200,66,0.3)';
